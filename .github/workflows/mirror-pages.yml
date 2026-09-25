@@ -1,0 +1,93 @@
+name: Mirror ChatGPT Site to GitHub Pages
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "*/15 * * * *"
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  mirror-and-deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Read source URL
+        id: source
+        shell: bash
+        run: |
+          set -euo pipefail
+          SOURCE_URL="$(tr -d '\r\n' < .site-source-url)"
+          if [[ -z "$SOURCE_URL" ]]; then
+            echo "Source URL is empty" >&2
+            exit 1
+          fi
+          echo "url=$SOURCE_URL" >> "$GITHUB_OUTPUT"
+
+      - name: Mirror published ChatGPT Site
+        shell: bash
+        env:
+          SOURCE_URL: ${{ steps.source.outputs.url }}
+        run: |
+          set -euo pipefail
+          rm -rf _site _mirror
+          mkdir -p _mirror _site
+
+          wget \
+            --mirror \
+            --page-requisites \
+            --convert-links \
+            --adjust-extension \
+            --span-hosts \
+            --domains="$(python - <<'PY'
+import os, urllib.parse
+print(urllib.parse.urlparse(os.environ['SOURCE_URL']).hostname)
+PY
+)" \
+            --no-host-directories \
+            --directory-prefix=_mirror \
+            --execute robots=off \
+            "$SOURCE_URL/"
+
+          cp -a _mirror/. _site/
+
+          # Also fetch the key route explicitly in case the app navigation is client-side.
+          wget \
+            --page-requisites \
+            --convert-links \
+            --adjust-extension \
+            --no-host-directories \
+            --directory-prefix=_heart \
+            --execute robots=off \
+            "$SOURCE_URL/heart-of-rus" || true
+
+          if [ -d _heart ]; then
+            cp -an _heart/. _site/ || true
+          fi
+
+          touch _site/.nojekyll
+          echo "ao-57.ru" > _site/CNAME
+
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
