@@ -24,25 +24,26 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Read source URL
-        id: source
+      - name: Pin ChatGPT Sites origin
         shell: bash
         run: |
           set -euo pipefail
-          SOURCE_URL="$(tr -d '\r\n' < .site-source-url)"
-          if [[ -z "$SOURCE_URL" ]]; then
-            echo "Source URL is empty" >&2
-            exit 1
-          fi
-          echo "url=$SOURCE_URL" >> "$GITHUB_OUTPUT"
+          # Keep fetching the current ChatGPT Sites origin even after public DNS
+          # for ao-57.ru is moved to GitHub Pages.
+          echo "162.159.143.30 ao-57.ru" | sudo tee -a /etc/hosts
+          echo "172.66.3.26 ao-57.ru" | sudo tee -a /etc/hosts
+
+      - name: Verify upstream
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsSIL --max-time 20 https://ao-57.ru/ | head -n 20
 
       - name: Mirror published ChatGPT Site
         shell: bash
-        env:
-          SOURCE_URL: ${{ steps.source.outputs.url }}
         run: |
           set -euo pipefail
-          rm -rf _site _mirror
+          rm -rf _site _mirror _heart
           mkdir -p _mirror _site
 
           wget \
@@ -50,20 +51,13 @@ jobs:
             --page-requisites \
             --convert-links \
             --adjust-extension \
-            --span-hosts \
-            --domains="$(python - <<'PY'
-import os, urllib.parse
-print(urllib.parse.urlparse(os.environ['SOURCE_URL']).hostname)
-PY
-)" \
             --no-host-directories \
             --directory-prefix=_mirror \
             --execute robots=off \
-            "$SOURCE_URL/"
+            https://ao-57.ru/
 
           cp -a _mirror/. _site/
 
-          # Also fetch the key route explicitly in case the app navigation is client-side.
           wget \
             --page-requisites \
             --convert-links \
@@ -71,7 +65,7 @@ PY
             --no-host-directories \
             --directory-prefix=_heart \
             --execute robots=off \
-            "$SOURCE_URL/heart-of-rus" || true
+            https://ao-57.ru/heart-of-rus || true
 
           if [ -d _heart ]; then
             cp -an _heart/. _site/ || true
